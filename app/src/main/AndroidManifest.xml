@@ -27,7 +27,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="让QQ在接收到推送时不被完全拉起而发送通知，且能通过通知打开(github@ff19,酷安@f19没有新欢)" />
+            android:value="apple music状态栏歌词模块，配合墨•状态栏歌词使用" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />

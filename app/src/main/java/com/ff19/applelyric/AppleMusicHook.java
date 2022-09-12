@@ -9,8 +9,6 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.util.Log;
-import android.widget.Toast;
-
 import java.lang.reflect.Constructor;
 
 import de.robv.android.xposed.XC_MethodHook;
@@ -28,6 +26,7 @@ public class AppleMusicHook {
     public Lyric curLyrics;
     public LyricInfo curInfo, lastShow;
     public int nextUpdateTime;
+    private StatusLyricApi api;
 
     AppleMusicHook(XC_LoadPackage.LoadPackageParam lpparam) {
         ClassLoader classLoader = lpparam.classLoader;
@@ -56,6 +55,9 @@ public class AppleMusicHook {
 //                    任何时候都发送歌曲更新信息
                     mainHandler.post(() -> {
                         XposedHelpers.callMethod(mediaCallBack, "onMetadataChanged", metadataCompat);
+                        if(api!=null){
+                            api.stopLyric();
+                        }
                     });
                 }
             });
@@ -66,6 +68,7 @@ public class AppleMusicHook {
                     lyricViewModel = param.thisObject;
                     Application application = (Application) param.args[0];
                     context = application.getApplicationContext();
+                    api = new StatusLyricApi(context);
                 }
             });
             XposedHelpers.findAndHookMethod("com.apple.android.music.player.fragment.PlayerLyricsViewFragment", classLoader, "R1", new XC_MethodHook() {
@@ -166,7 +169,10 @@ public class AppleMusicHook {
                 curInfo = curLyrics.getLyricByPosition(currentPosition);
             }
             if (lastShow != curInfo) {
-                Log.d(TAG, curInfo.lyricStr);
+                if(api!=null){
+                    api.sendLyric(curInfo.lyricStr);
+                }
+//                Log.d(TAG, curInfo.lyricStr);
                 lastShow = curInfo;
             }
 
