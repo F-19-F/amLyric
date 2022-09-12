@@ -9,6 +9,7 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
+import android.text.TextUtils;
 import android.util.Log;
 import java.lang.reflect.Constructor;
 
@@ -17,17 +18,18 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class AppleMusicHook {
-    private Object mediaCallBack, lyricViewModel, curLyricObj, PlaybackStateCompat, stateLock, LyricsViewFragment,LYRICS;
+    private Object mediaCallBack, lyricViewModel, curLyricObj,curSongInfo, PlaybackStateCompat, stateLock, LyricsViewFragment,LYRICS;
     private Context context;
     private boolean timeStarted;
     private Handler handler, mainHandler;
     public String TAG = "applemusiclyric";
-    public Class<?> MediaMetadataCompatClass;
+    public Class<?> MediaMetadataCompatClass,LocaleUtilClass;
     public Constructor lbcConstructor;
     public Lyric curLyrics;
     public LyricInfo curInfo, lastShow;
     public int nextUpdateTime;
     private String last;
+    private String locale;
     private StatusLyricApi api;
 
 
@@ -45,6 +47,16 @@ public class AppleMusicHook {
             Class<?> lbcClass = classLoader.loadClass("lb.c");
             Class<?> LyricsSectionVectorClass = classLoader.loadClass("com.apple.android.music.ttml.javanative.model.LyricsSectionVector");
             lbcConstructor = lbcClass.getConstructor(LyricsSectionVectorClass);
+            LocaleUtilClass = classLoader.loadClass("com.apple.android.music.playback.util.LocaleUtil");
+            XposedHelpers.findAndHookMethod("com.apple.android.music.playback.util.LocaleUtil", classLoader, "getSystemLyricsLanguage", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    super.afterHookedMethod(param);
+                    param.setResult("zh-Hans");
+                }
+            });
+            locale = (String) XposedHelpers.callStaticMethod(LocaleUtilClass,"getSystemLyricsLanguage");
+//            Log.d(TAG,locale);
             // 保证在后台依旧更新歌词
             XposedHelpers.findAndHookConstructor("com.apple.android.music.player.fragment.b$c", classLoader, classLoader.loadClass("com.apple.android.music.player.fragment.b"), classLoader.loadClass("androidx.appcompat.widget.t0"), new XC_MethodHook() {
                 @Override
@@ -120,6 +132,7 @@ public class AppleMusicHook {
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     super.beforeHookedMethod(param);
                     Object SongInfo = XposedHelpers.callMethod(param.args[0], "get");
+                    curSongInfo = SongInfo;
                     Object LyricsSectionVector = XposedHelpers.callMethod(SongInfo, "getSections");
                     curLyricObj = lbcConstructor.newInstance(LyricsSectionVector);
                     updateLyricDict();
@@ -184,6 +197,13 @@ public class AppleMusicHook {
         while (LyricsLinePtr != null) {
             Object LyricsLine = XposedHelpers.callMethod(LyricsLinePtr, "get");
             String str = (String) XposedHelpers.callMethod(LyricsLine, "getHtmlLineText");
+            String transkey = (String)XposedHelpers.callMethod(LyricsLine,"getTranslationKey");
+            if(!TextUtils.isEmpty(transkey)){
+                String trans = (String) XposedHelpers.callMethod(curSongInfo,"getTranslation",locale,transkey);
+                if(trans!=null && !trans.isEmpty()){
+                    str = trans;
+                }
+            }
             int begin = (int) XposedHelpers.callMethod(LyricsLine, "getBegin");
             int end = (int) XposedHelpers.callMethod(LyricsLine, "getEnd");
 //            Log.d(TAG,str);
