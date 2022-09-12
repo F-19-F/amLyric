@@ -1,8 +1,5 @@
 package com.ff19.applelyric;
 
-import android.util.Log;
-
-import com.google.android.material.tabs.TabLayout;
 
 import java.util.ArrayList;
 import java.util.HashMap;
