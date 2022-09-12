@@ -78,13 +78,13 @@ public class AppleMusicHook {
                                 curLyrics.clean();
                                 api.stopLyric();
                             }
-                            mainHandler.post(() -> {
-                                if (mediaCallBack != null) {
-                                    XposedHelpers.callMethod(mediaCallBack, "onMetadataChanged", metadataCompat);
-                                }
-                            });
                         }
                     }
+                    mainHandler.post(() -> {
+                        if (mediaCallBack != null) {
+                            XposedHelpers.callMethod(mediaCallBack, "onMetadataChanged", metadataCompat);
+                        }
+                    });
 //                    Log.d(TAG,metadata.getString(MediaMetadata.METADATA_KEY_ART_URI));
 
                 }
