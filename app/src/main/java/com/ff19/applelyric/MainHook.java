@@ -1,6 +1,5 @@
 package com.ff19.applelyric;
 
-import android.util.Log;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;

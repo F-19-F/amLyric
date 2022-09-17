@@ -4,7 +4,7 @@ import android.content.Context;
 import android.content.Intent;
 
 public class StatusLyricApi {
-    private Context context;
+    private final Context context;
     StatusLyricApi(Context context){
         this.context = context;
     }

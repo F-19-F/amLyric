@@ -9,7 +9,7 @@ import java.util.Map;
 public class Lyric {
     public Map<Integer, LyricInfo> lyricInfoMap;
     public List<Integer> points;
-    public Object changeLock;
+    public final Object changeLock;
 
     public Lyric() {
         lyricInfoMap = new HashMap<>();
