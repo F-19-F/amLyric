@@ -11,9 +11,12 @@ import android.os.Message;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
+
 import java.lang.reflect.Constructor;
+import java.util.Enumeration;
 import java.util.Locale;
 
+import dalvik.system.DexFile;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -28,8 +31,8 @@ public class AppleMusicHook {
     private final Handler handler;
     private final Handler mainHandler;
     public String TAG = "lyricApple";
-    public Class<?> MediaMetadataCompatClass,LocaleUtilClass,StringVector$StringVectorNativeCls,LyricReqCls;
-    public Constructor lbcConstructor,LyricReqConstructor;
+    public Class<?> MediaMetadataCompatClass, LocaleUtilClass, StringVector$StringVectorNativeCls;
+    public Constructor lyricConvertConstructor, LyricReqConstructor;
     public Lyric curLyrics;
     public LyricInfo curInfo, lastShow;
     public int nextUpdateTime;
@@ -53,14 +56,9 @@ public class AppleMusicHook {
 
         try {
             MediaMetadataCompatClass = classLoader.loadClass("android.support.v4.media.MediaMetadataCompat");
-//            构建歌词用的
-            Class<?> lbcClass = classLoader.loadClass("lb.c");
             Class<?> LyricsSectionVectorClass = classLoader.loadClass("com.apple.android.music.ttml.javanative.model.LyricsSectionVector");
-            lbcConstructor = lbcClass.getConstructor(LyricsSectionVectorClass);
             LocaleUtilClass = classLoader.loadClass("com.apple.android.music.playback.util.LocaleUtil");
             StringVector$StringVectorNativeCls = classLoader.loadClass("com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative");
-            LyricReqCls = classLoader.loadClass("lb.a$a");
-            LyricReqConstructor = LyricReqCls.getConstructor(Context.class,long.class,long.class,long.class,StringVector$StringVectorNativeCls,boolean.class);
             Class<?> musicCls = classLoader.loadClass("com.apple.android.music.model.Song");
             XposedHelpers.findAndHookMethod("com.apple.android.music.playback.util.LocaleUtil", classLoader, "getSystemLyricsLanguage", new XC_MethodHook() {
                 @Override
@@ -70,17 +68,48 @@ public class AppleMusicHook {
                     param.setResult("zh-Hans");
                 }
             });
-            locale = (String) XposedHelpers.callStaticMethod(LocaleUtilClass,"getSystemLyricsLanguage");
+            locale = (String) XposedHelpers.callStaticMethod(LocaleUtilClass, "getSystemLyricsLanguage");
+
+            new Thread(() -> {
+                try {
+                    Class OnLoadCallbackClass = classLoader.loadClass("com.apple.android.music.ttml.javanative.LyricsController$LyricsControllerNative$OnLoadCallback");
+                    DexFile dexFile = new DexFile(lpparam.appInfo.sourceDir);
+                    Enumeration<String> classNames = dexFile.entries();
+                    while (classNames.hasMoreElements()) {
+                        String classname = classNames.nextElement();
+                        try {
+                            Class<?> cls = lpparam.classLoader.loadClass(classname);
+                            if (cls.getSuperclass() == OnLoadCallbackClass) {
+//                                callback
+                                handleLyricReqHook(cls, classLoader);
+
+                            } else {
+                                for (Constructor<?> constructor : cls.getConstructors()) {
+                                    if (constructor.getParameterTypes().length == 1 && constructor.getParameterTypes()[0] == LyricsSectionVectorClass && cls.getFields().length == 1) {
+//                                            Log.d(TAG, "found constructor " + classname);
+                                        lyricConvertConstructor = constructor;
+                                    }
+                                }
+                            }
+                        } catch (Throwable e) {
+
+                        }
+
+                    }
+                } catch (Throwable e) {
+
+                }
+            }).start();
 
             XposedHelpers.findAndHookMethod("com.apple.android.music.model.BaseContentItem", classLoader, "setId", java.lang.String.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     super.afterHookedMethod(param);
                     String trace = Log.getStackTraceString(new Exception());
-                    if(musicCls.isInstance(param.thisObject)&& trace.contains("e3.h.w")){
+                    if (musicCls.isInstance(param.thisObject) && (trace.contains("getItemAtIndex") && trace.contains("i7.u.accept") || trace.contains("e3.h.w"))) {
                         curId = (String) param.args[0];
-                        Log.d(TAG,"cur music id :"+ curId + "request lyric now");
-                        reqLyric(Long.parseLong(curId),0, Locale.getDefault().getLanguage()+"_"+Locale.getDefault());
+                        Log.d(TAG, "cur music id :" + curId + "request lyric now");
+                        reqLyric(Long.parseLong(curId), 0, Locale.getDefault().getLanguage() + "_" + Locale.getDefault());
                     }
                 }
             });
@@ -89,12 +118,12 @@ public class AppleMusicHook {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     Object metadataCompat = XposedHelpers.callStaticMethod(MediaMetadataCompatClass, "a", param.args[0]);
-                    MediaMetadata metadata = (MediaMetadata) XposedHelpers.getObjectField(metadataCompat,"t");
+                    MediaMetadata metadata = (MediaMetadata) XposedHelpers.getObjectField(metadataCompat, "t");
                     String newTitle = metadata.getString(MediaMetadata.METADATA_KEY_TITLE);
                     synchronized (stateLock) {
                         if (!last.equals(newTitle)) {
                             last = newTitle;
-                            Log.d(TAG,"new song "+ newTitle);
+                            Log.d(TAG, "new song " + newTitle);
                             requested = false;
                             if (api != null) {
                                 curLyrics.clean();
@@ -115,32 +144,6 @@ public class AppleMusicHook {
                     api = new StatusLyricApi(context);
                 }
             });
-            // 获取返回的歌词(callback)
-            XposedHelpers.findAndHookMethod("lb.a$a$a", classLoader, "call",  classLoader.loadClass("com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"), int.class, long.class, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    super.beforeHookedMethod(param);
-                    Object appleCb = XposedHelpers.getObjectField(param.thisObject,"s");
-                    curSongInfo = XposedHelpers.callMethod(param.args[0], "get");
-                    if(curSongInfo == null){
-                        if(appleCb == null){
-                            param.setResult(null);
-                            return;
-                        }
-                        return;
-                    }
-                    Object LyricsSectionVector = XposedHelpers.callMethod(curSongInfo, "getSections");
-                    curLyricObj = lbcConstructor.newInstance(LyricsSectionVector);
-                    updateLyricDict();
-                    Log.d(TAG,"load new lyrics");
-                    if(api != null){
-                        api.stopLyric();
-                    }
-                    if(appleCb == null){
-                        param.setResult(null);
-                    }
-                }
-            });
             // 播放状态，时间，是否暂停等
             XposedHelpers.findAndHookMethod("android.support.v4.media.session.MediaControllerCompat$a$b", classLoader, "handleMessage", android.os.Message.class, new XC_MethodHook() {
                 @Override
@@ -153,22 +156,60 @@ public class AppleMusicHook {
                         }
                         Object D = XposedHelpers.getObjectField(PlaybackStateCompat, "D");
                         if (D == null) {
-                            Log.d(TAG, "playBackState is null");
+//                            Log.d(TAG, "playBackState is null");
+                            return;
                         }
                         updateTime();
                     }
                 }
             });
-        } catch (ClassNotFoundException | NoSuchMethodException e) {
+        } catch (Throwable e) {
             Log.d(TAG, Log.getStackTraceString(e));
-            e.printStackTrace();
         }
     }
 
-    public void reqLyric(long songId,long songQueue,String locale){
+
+    public void handleLyricReqHook(Class<?> callBack, ClassLoader classLoader) {
         try {
-            synchronized (stateLock){
-                if(requested){
+            Class<?> LyricReqCls = callBack.getEnclosingClass();
+            LyricReqConstructor = LyricReqCls.getConstructor(Context.class, long.class, long.class, long.class, StringVector$StringVectorNativeCls, boolean.class);
+            XposedHelpers.findAndHookMethod(callBack, "call", classLoader.loadClass("com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"), int.class, long.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    super.beforeHookedMethod(param);
+                    if(lyricConvertConstructor == null){
+                        return;
+                    }
+                    Object appleCb = XposedHelpers.getObjectField(param.thisObject, "s");
+                    curSongInfo = XposedHelpers.callMethod(param.args[0], "get");
+                    if (curSongInfo == null) {
+                        if (appleCb == null) {
+                            param.setResult(null);
+                            return;
+                        }
+                        return;
+                    }
+                    Object LyricsSectionVector = XposedHelpers.callMethod(curSongInfo, "getSections");
+                    curLyricObj = lyricConvertConstructor.newInstance(LyricsSectionVector);
+                    updateLyricDict();
+                    Log.d(TAG, "load new lyrics");
+                    if (api != null) {
+                        api.stopLyric();
+                    }
+                    if (appleCb == null) {
+                        param.setResult(null);
+                    }
+                }
+            });
+        } catch (Throwable e) {
+            Log.d(TAG, Log.getStackTraceString(e));
+        }
+    }
+
+    public void reqLyric(long songId, long songQueue, String locale) {
+        try {
+            synchronized (stateLock) {
+                if (requested || LyricReqConstructor == null) {
                     return;
                 }
             }
@@ -177,17 +218,17 @@ public class AppleMusicHook {
             String[] strArr = new String[1];
             strArr[0] = locale;
 //            songQueue = 42949672960l;
-            XposedHelpers.callMethod(localeVector,"put", (Object) strArr);
+            XposedHelpers.callMethod(localeVector, "put", (Object) strArr);
 //            songQueue = 42949672960l;
-            Object lyricClient = LyricReqConstructor.newInstance(context,songId,songId,songQueue,localeVector,false);
-            XposedHelpers.callMethod(lyricClient,"subscribe", (Object) null);
-            mainHandler.postDelayed(()->{
-                synchronized (stateLock){
+            Object lyricClient = LyricReqConstructor.newInstance(context, songId, songId, songQueue, localeVector, false);
+            XposedHelpers.callMethod(lyricClient, "subscribe", (Object) null);
+            mainHandler.postDelayed(() -> {
+                synchronized (stateLock) {
                     requested = false;
                 }
-            },1000);
-        } catch (Throwable e){
-            Log.d(TAG,Log.getStackTraceString(e));
+            }, 1000);
+        } catch (Throwable e) {
+            Log.d(TAG, Log.getStackTraceString(e));
         }
     }
 
@@ -198,10 +239,10 @@ public class AppleMusicHook {
         while (LyricsLinePtr != null) {
             Object LyricsLine = XposedHelpers.callMethod(LyricsLinePtr, "get");
             String str = (String) XposedHelpers.callMethod(LyricsLine, "getHtmlLineText");
-            String transkey = (String)XposedHelpers.callMethod(LyricsLine,"getTranslationKey");
-            if(!TextUtils.isEmpty(transkey)){
-                String trans = (String) XposedHelpers.callMethod(curSongInfo,"getTranslation",locale,transkey);
-                if(trans!=null && !trans.isEmpty()){
+            String transkey = (String) XposedHelpers.callMethod(LyricsLine, "getTranslationKey");
+            if (!TextUtils.isEmpty(transkey)) {
+                String trans = (String) XposedHelpers.callMethod(curSongInfo, "getTranslation", locale, transkey);
+                if (trans != null && !trans.isEmpty()) {
                     str = trans;
                 }
             }
@@ -232,7 +273,6 @@ public class AppleMusicHook {
                         PlaybackState playbackState = (PlaybackState) D;
                         if (!onUpdate(playbackState)) {
                             timeStarted = false;
-                            Log.d(TAG, "exiting");
                             return;
                         }
                         handler.postDelayed(this, 400);
