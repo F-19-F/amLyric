@@ -25,13 +25,15 @@ public class AppleMusicHook {
     private Object curLyricObj;
     private Object curSongInfo;
     private Object PlaybackStateCompat;
+    private Object lyricViewModel;
+    private Object playbackItem;
     private final Object stateLock;
     private Context context;
     private boolean timeStarted;
     private final Handler handler;
     private final Handler mainHandler;
     public String TAG = "lyricApple";
-    public Class<?> MediaMetadataCompatClass, LocaleUtilClass, StringVector$StringVectorNativeCls;
+    public Class<?> MediaMetadataCompatClass, LocaleUtilClass, StringVector$StringVectorNativeCls,PlaybackItemClass,PlayerLyricsViewModelClass;
     public Constructor lyricConvertConstructor, LyricReqConstructor;
     public Lyric curLyrics;
     public LyricInfo curInfo, lastShow;
@@ -55,11 +57,16 @@ public class AppleMusicHook {
         requested = false;
 
         try {
+            try{
+                PlayerLyricsViewModelClass =classLoader.loadClass("com.apple.android.music.player.viewmodel.PlayerLyricsViewModel");
+            }catch (ClassNotFoundException ignored){
+                Log.d(TAG,"version < 4.1.0");
+            }
+            PlaybackItemClass=classLoader.loadClass("com.apple.android.music.model.PlaybackItem");
             MediaMetadataCompatClass = classLoader.loadClass("android.support.v4.media.MediaMetadataCompat");
             Class<?> LyricsSectionVectorClass = classLoader.loadClass("com.apple.android.music.ttml.javanative.model.LyricsSectionVector");
             LocaleUtilClass = classLoader.loadClass("com.apple.android.music.playback.util.LocaleUtil");
             StringVector$StringVectorNativeCls = classLoader.loadClass("com.apple.android.mediaservices.javanative.common.StringVector$StringVectorNative");
-            Class<?> musicCls = classLoader.loadClass("com.apple.android.music.model.Song");
             XposedHelpers.findAndHookMethod("com.apple.android.music.playback.util.LocaleUtil", classLoader, "getSystemLyricsLanguage", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -100,16 +107,43 @@ public class AppleMusicHook {
 
                 }
             }).start();
-
+            XposedHelpers.findAndHookMethod("com.apple.android.music.player.viewmodel.PlayerLyricsViewModel", classLoader, "buildTimeRangeToLyricsMap", classLoader.loadClass("com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"), new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    super.afterHookedMethod(param);
+                    if(param.args[0] == null){
+                        return;
+                    }
+                    curSongInfo = XposedHelpers.callMethod(param.args[0], "get");
+                    if (curSongInfo == null) {
+                        return;
+                    }
+                    Object LyricsSectionVector = XposedHelpers.callMethod(curSongInfo, "getSections");
+                    curLyricObj = lyricConvertConstructor.newInstance(LyricsSectionVector);
+                    updateLyricDict();
+                }
+            });
             XposedHelpers.findAndHookMethod("com.apple.android.music.model.BaseContentItem", classLoader, "setId", java.lang.String.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     super.afterHookedMethod(param);
                     String trace = Log.getStackTraceString(new Exception());
-                    if (musicCls.isInstance(param.thisObject) && (trace.contains("getItemAtIndex") && trace.contains("i7.u.accept") || trace.contains("e3.h.w"))) {
+                    if (PlaybackItemClass.isInstance(param.thisObject) && (trace.contains("getItemAtIndex") &&
+//                            4.0.0
+                            (trace.contains("i7.u.accept") ||
+//                                    3.10.2
+                                    trace.contains("e3.h.w") ||
+//                                    4.1.0
+                                    trace.contains("k7.t.accept")))) {
                         curId = (String) param.args[0];
+                        playbackItem = param.thisObject;
                         Log.d(TAG, "cur music id :" + curId + "request lyric now");
-                        reqLyric(Long.parseLong(curId), 0, Locale.getDefault().getLanguage() + "_" + Locale.getDefault());
+                        if(curId == null){
+                            return;
+                        }
+                        mainHandler.postDelayed(()->{
+                            reqLyric(Long.parseLong(curId), 0, Locale.getDefault().getLanguage() + "_" + Locale.getDefault());
+                        },400);
                     }
                 }
             });
@@ -141,6 +175,10 @@ public class AppleMusicHook {
                     super.afterHookedMethod(param);
                     Application application = (Application) param.thisObject;
                     context = application.getBaseContext();
+//                  4.1.0+
+                    if(PlayerLyricsViewModelClass!=null){
+                        lyricViewModel = PlayerLyricsViewModelClass.getConstructor(Application.class).newInstance(application);
+                    }
                     api = new StatusLyricApi(context);
                 }
             });
@@ -214,14 +252,17 @@ public class AppleMusicHook {
                 }
             }
             requested = true;
-            Object localeVector = StringVector$StringVectorNativeCls.newInstance();
-            String[] strArr = new String[1];
-            strArr[0] = locale;
-//            songQueue = 42949672960l;
-            XposedHelpers.callMethod(localeVector, "put", (Object) strArr);
-//            songQueue = 42949672960l;
-            Object lyricClient = LyricReqConstructor.newInstance(context, songId, songId, songQueue, localeVector, false);
-            XposedHelpers.callMethod(lyricClient, "subscribe", (Object) null);
+            // 4.1.0+
+            if(PlayerLyricsViewModelClass!=null){
+                XposedHelpers.callMethod(lyricViewModel,"loadLyrics",playbackItem);
+            }else {
+                Object localeVector = StringVector$StringVectorNativeCls.newInstance();
+                String[] strArr = new String[1];
+                strArr[0] = locale;
+                XposedHelpers.callMethod(localeVector, "put", (Object) strArr);
+                Object lyricClient = LyricReqConstructor.newInstance(context, songId, songId, songQueue, localeVector, false);
+                XposedHelpers.callMethod(lyricClient, "subscribe", (Object) null);
+            }
             mainHandler.postDelayed(() -> {
                 synchronized (stateLock) {
                     requested = false;
@@ -237,13 +278,17 @@ public class AppleMusicHook {
         int i = 0;
         Object LyricsLinePtr = XposedHelpers.callMethod(curLyricObj, "a", i);
         while (LyricsLinePtr != null) {
+//            com.apple.android.music.ttml.javanative.model.LyricsLine$LyricsLineNative
             Object LyricsLine = XposedHelpers.callMethod(LyricsLinePtr, "get");
             String str = (String) XposedHelpers.callMethod(LyricsLine, "getHtmlLineText");
-            String transkey = (String) XposedHelpers.callMethod(LyricsLine, "getTranslationKey");
-            if (!TextUtils.isEmpty(transkey)) {
-                String trans = (String) XposedHelpers.callMethod(curSongInfo, "getTranslation", locale, transkey);
-                if (trans != null && !trans.isEmpty()) {
-                    str = trans;
+//            < 4.1.0
+            if(PlayerLyricsViewModelClass==null){
+                String transkey = (String) XposedHelpers.callMethod(LyricsLine, "getTranslationKey");
+                if (!TextUtils.isEmpty(transkey)) {
+                    String trans = (String) XposedHelpers.callMethod(curSongInfo, "getTranslation", locale, transkey);
+                    if (trans != null && !trans.isEmpty()) {
+                        str = trans;
+                    }
                 }
             }
             int begin = (int) XposedHelpers.callMethod(LyricsLine, "getBegin");
