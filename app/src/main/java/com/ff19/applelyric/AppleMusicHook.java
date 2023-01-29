@@ -59,7 +59,23 @@ public class AppleMusicHook {
         try {
             try{
                 PlayerLyricsViewModelClass =classLoader.loadClass("com.apple.android.music.player.viewmodel.PlayerLyricsViewModel");
-            }catch (ClassNotFoundException ignored){
+                XposedHelpers.findAndHookMethod("com.apple.android.music.player.viewmodel.PlayerLyricsViewModel", classLoader, "buildTimeRangeToLyricsMap", classLoader.loadClass("com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"), new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        super.afterHookedMethod(param);
+                        if(param.args[0] == null){
+                            return;
+                        }
+                        curSongInfo = XposedHelpers.callMethod(param.args[0], "get");
+                        if (curSongInfo == null) {
+                            return;
+                        }
+                        Object LyricsSectionVector = XposedHelpers.callMethod(curSongInfo, "getSections");
+                        curLyricObj = lyricConvertConstructor.newInstance(LyricsSectionVector);
+                        updateLyricDict();
+                    }
+                });
+            }catch (Throwable ignored){
                 Log.d(TAG,"version < 4.1.0");
             }
             PlaybackItemClass=classLoader.loadClass("com.apple.android.music.model.PlaybackItem");
@@ -107,22 +123,6 @@ public class AppleMusicHook {
 
                 }
             }).start();
-            XposedHelpers.findAndHookMethod("com.apple.android.music.player.viewmodel.PlayerLyricsViewModel", classLoader, "buildTimeRangeToLyricsMap", classLoader.loadClass("com.apple.android.music.ttml.javanative.model.SongInfo$SongInfoPtr"), new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    super.afterHookedMethod(param);
-                    if(param.args[0] == null){
-                        return;
-                    }
-                    curSongInfo = XposedHelpers.callMethod(param.args[0], "get");
-                    if (curSongInfo == null) {
-                        return;
-                    }
-                    Object LyricsSectionVector = XposedHelpers.callMethod(curSongInfo, "getSections");
-                    curLyricObj = lyricConvertConstructor.newInstance(LyricsSectionVector);
-                    updateLyricDict();
-                }
-            });
             XposedHelpers.findAndHookMethod("com.apple.android.music.model.BaseContentItem", classLoader, "setId", java.lang.String.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
